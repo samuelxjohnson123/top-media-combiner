@@ -26,24 +26,10 @@ if sprinklr_file and cision_file:
     detailed_list = master_xl.parse("Detailed List for Msmt")
     journalist_check = master_xl.parse("Journalist Check")
 
-    # Rename Cision columns to match Sprinklr template
-    cision = cision.rename(columns={
-        "Date": "CreatedTime",
-        "Media Type": "Source",
-        "Media Outlet": "Publication Name",
-        "Title": "Media Title",
-        "Link": "Permalink",
-        "Author": "Journalist",
-        "Sentiment": "Sentiment"
-    })
+    # Remove duplicate columns from Sprinklr (if present)
+    sprinklr = sprinklr.loc[:, ~sprinklr.columns.duplicated()]
 
-    # Only actually rename Sprinklr columns that need to change
-    sprinklr = sprinklr.rename(columns={
-        "Conversation Stream": "Media Title",
-        "Resolved_URL": "Permalink"
-    })
-
-    # Define common columns we want to keep
+    # Define common columns to keep
     common_cols = [
         "CreatedTime", "Source", "Publication Name", "Media Title",
         "Permalink", "Journalist", "Sentiment"
