@@ -77,14 +77,7 @@ if sprinklr_file and cision_file:
         "Permalink", "Journalist", "Sentiment"
     ]
 
-    if not sprinklr.columns.is_unique:
-        st.error("Sprinklr file has duplicate columns. Please check and re-upload.")
-        st.stop()
-
-    if not cision.columns.is_unique:
-        st.error("Cision file has duplicate columns. Please check and re-upload.")
-        st.stop()
-
+    # Reindex to ensure same shape
     sprinklr = sprinklr.reindex(columns=common_cols, fill_value="")
     cision = cision.reindex(columns=common_cols, fill_value="")
 
@@ -115,7 +108,7 @@ if sprinklr_file and cision_file:
     combined.drop(columns=['Permalink_lower'], inplace=True)
 
     # Make URLs clickable
-    combined['Permalink'] = combined['Permalink'].apply(lambda x: f'=HYPERLINK("{x}", "Link")' if pd.notna(x) and x != "" else "")
+    combined['Permalink'] = combined['Permalink'].apply(lambda x: f'=HYPERLINK("{x}", "Link")' if pd.notna(x) else "")
 
     # Reorder columns
     final_cols = [
