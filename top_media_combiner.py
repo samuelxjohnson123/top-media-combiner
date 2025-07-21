@@ -36,10 +36,25 @@ if sprinklr_file and cision_file:
         "Sentiment": "Sentiment"
     })
 
-    # Align Sprinklr columns to match template names if needed
+    # Align Sprinklr columns to match Cision column names
     sprinklr = sprinklr.rename(columns={
-        "Resolved_URL": "Permalink"
+        "Conversation Stream": "Media Title",
+        "CreatedTime": "CreatedTime",
+        "Source": "Source",
+        "Publication Name": "Publication Name",
+        "Resolved_URL": "Permalink",
+        "Journalist": "Journalist",
+        "Sentiment": "Sentiment"
     })
+
+    # Ensure both DataFrames have the same columns in the same order
+    common_cols = [
+        "CreatedTime", "Source", "Publication Name", "Media Title",
+        "Permalink", "Journalist", "Sentiment"
+    ]
+
+    sprinklr = sprinklr[common_cols]
+    cision = cision[common_cols]
 
     combined = pd.concat([sprinklr, cision], ignore_index=True)
 
