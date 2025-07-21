@@ -25,40 +25,34 @@ if sprinklr_file and cision_file:
     detailed_list = master_xl.parse("Detailed List for Msmt")
     journalist_check = master_xl.parse("Journalist Check")
 
-    # Standardize Cision columns to match template
-    cision = cision.rename(columns={
-        "Date": "CreatedTime",
-        "Media Type": "Source",
-        "Media Outlet": "Publication Name",
-        "Title": "Media Title",
-        "Link": "Permalink",
-        "Author": "Journalist",
-        "Sentiment": "Sentiment"
-    })
-
-    # Align Sprinklr columns to match Cision column names
+    # Only actually rename columns that need to change
     sprinklr = sprinklr.rename(columns={
         "Conversation Stream": "Media Title",
-        "CreatedTime": "CreatedTime",
-        "Source": "Source",
-        "Publication Name": "Publication Name",
-        "Resolved_URL": "Permalink",
-        "Journalist": "Journalist",
-        "Sentiment": "Sentiment"
+        "Resolved_URL": "Permalink"
     })
 
-    # Ensure both DataFrames have the same columns in the same order
+    # Define common columns we want to keep
     common_cols = [
         "CreatedTime", "Source", "Publication Name", "Media Title",
         "Permalink", "Journalist", "Sentiment"
     ]
 
+    # Debug: show columns present
+    st.write("Sprinklr columns BEFORE selecting common:", sprinklr.columns.tolist())
+    st.write("Cision columns BEFORE selecting common:", cision.columns.tolist())
+
+    # Select only common columns
     sprinklr = sprinklr[common_cols]
     cision = cision[common_cols]
 
+    # Debug: show columns after selection
+    st.write("Sprinklr columns AFTER selecting common:", sprinklr.columns.tolist())
+    st.write("Cision columns AFTER selecting common:", cision.columns.tolist())
+
+    # Combine both datasets
     combined = pd.concat([sprinklr, cision], ignore_index=True)
 
-    # Blank manual columns
+    # Add blank manual columns
     combined['?'] = ""
     combined['Campaign'] = ""
     combined['Phase'] = ""
@@ -70,7 +64,6 @@ if sprinklr_file and cision_file:
 
     # Map Outlet Group and Outlet
     outlet_map = detailed_list[['Outlet Name', 'Vertical (FOR VLOOKUP)']].dropna()
-
     combined = combined.merge(outlet_map, how='left', left_on='Publication Name', right_on='Outlet Name')
     combined['Outlet Group'] = combined['Vertical (FOR VLOOKUP)']
     combined['Outlet'] = combined['Outlet Name']
@@ -96,7 +89,6 @@ if sprinklr_file and cision_file:
         'Web shares overall', 'EMV', 'ExUS Author'
     ]
 
-    # Fill in missing columns if any
     for col in final_cols:
         if col not in combined.columns:
             combined[col] = ""
