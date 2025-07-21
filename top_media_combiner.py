@@ -19,7 +19,8 @@ cision_file = st.file_uploader("Upload Cision file (.csv)", type="csv")
 
 if sprinklr_file and cision_file:
     sprinklr = pd.read_excel(sprinklr_file)
-    cision = pd.read_csv(cision_file)
+    cision = pd.read_csv(cision_file, skiprows=3)
+    cision.dropna(how='all', inplace=True)
     master_xl = pd.ExcelFile("2025_Master Outlet List.xlsx")
 
     detailed_list = master_xl.parse("Detailed List for Msmt")
