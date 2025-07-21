@@ -36,7 +36,7 @@ if sprinklr_file and cision_file:
 
     # Read Cision
     if cision_file.name.endswith(".csv"):
-        cision = pd.read_csv(cision_file, skiprows=3, encoding='utf-8', errors='ignore')
+        cision = pd.read_csv(cision_file, skiprows=3, encoding='utf-8')
     else:
         cision = pd.read_excel(cision_file, skiprows=3)
 
