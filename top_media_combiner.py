@@ -1,64 +1,83 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+import requests
 
 st.title("📊 Top Media Combiner")
 
 st.markdown("""
 Upload your daily **Sprinklr** and **Cision** files. This app will:
 
+✅ Accept `.xlsx` or `.csv` for either file  
 ✅ Combine & align columns  
-✅ Mark duplicates (only later ones) with `R` in `?`  
+✅ Resolve URLs for deduplication  
+✅ Mark duplicates (later ones) with `R` in `?`  
 ✅ Map `Outlet Group` & `Outlet` from master list  
-✅ Flag `ExUS Author` in a new column  
+✅ Flag `ExUS Author`  
 ✅ Add blank columns for manual entry  
+✅ Make URLs clickable in Excel  
 """)
 
-sprinklr_file = st.file_uploader("Upload Sprinklr file (.xlsx)", type="xlsx")
-cision_file = st.file_uploader("Upload Cision file (.csv)", type="csv")
+sprinklr_file = st.file_uploader("Upload Sprinklr file (.xlsx or .csv)", type=["xlsx", "csv"])
+cision_file = st.file_uploader("Upload Cision file (.xlsx or .csv)", type=["xlsx", "csv"])
 
 if sprinklr_file and cision_file:
-    sprinklr = pd.read_excel(sprinklr_file)
-    cision = pd.read_csv(cision_file, skiprows=3)
-    cision.dropna(how='all', inplace=True)
-    master_xl = pd.ExcelFile("2025_Master Outlet List.xlsx")
+    def load_file(uploaded_file):
+        if uploaded_file.name.endswith(".csv"):
+            return pd.read_csv(uploaded_file, skiprows=3 if "cision" in uploaded_file.name.lower() else 0)
+        else:
+            return pd.read_excel(uploaded_file)
 
+    sprinklr = load_file(sprinklr_file)
+    cision = load_file(cision_file)
+    cision.dropna(how='all', inplace=True)
+
+    master_xl = pd.ExcelFile("2025_Master Outlet List.xlsx")
     detailed_list = master_xl.parse("Detailed List for Msmt")
     journalist_check = master_xl.parse("Journalist Check")
 
-    # Remove duplicate columns from Sprinklr (if present)
-    sprinklr = sprinklr.loc[:, ~sprinklr.columns.duplicated()]
+    sprinklr = sprinklr.rename(columns={
+        "Conversation Stream": "Media Title",
+        "Resolved_URL": "Permalink"
+    })
 
-    # Define common columns to keep
+    cision = cision.rename(columns={
+        "Date": "CreatedTime",
+        "Media Type": "Source",
+        "Media Outlet": "Publication Name",
+        "Title": "Media Title",
+        "Link": "Permalink",
+        "Author": "Journalist",
+        "Sentiment": "Sentiment"
+    })
+
     common_cols = [
         "CreatedTime", "Source", "Publication Name", "Media Title",
         "Permalink", "Journalist", "Sentiment"
     ]
 
-    # Debug: show columns present
-    st.write("Sprinklr columns BEFORE selecting common:", sprinklr.columns.tolist())
-    st.write("Cision columns BEFORE selecting common:", cision.columns.tolist())
-
-    # Select only common columns
     sprinklr = sprinklr[common_cols]
     cision = cision[common_cols]
 
-    # Debug: show columns after selection
-    st.write("Sprinklr columns AFTER selecting common:", sprinklr.columns.tolist())
-    st.write("Cision columns AFTER selecting common:", cision.columns.tolist())
-
-    # Combine both datasets
     combined = pd.concat([sprinklr, cision], ignore_index=True)
 
+    # Resolve URLs
+    st.info("🔄 Resolving URLs… this may take some time.")
+    resolved_urls = []
+    for url in combined['Permalink']:
+        try:
+            r = requests.head(url, allow_redirects=True, timeout=5)
+            resolved_urls.append(r.url)
+        except:
+            resolved_urls.append(url)
+    combined['Resolved_Permalink'] = resolved_urls
+
+    # Deduplicate based on resolved URLs
+    combined['?'] = combined.duplicated(subset=['Resolved_Permalink'], keep='first').map({True: 'R', False: ''})
+
     # Add blank manual columns
-    combined['?'] = ""
-    combined['Campaign'] = ""
-    combined['Phase'] = ""
-    combined['Products'] = ""
-    combined['PreOrder'] = ""
-    combined['Outlet Group'] = ""
-    combined['Outlet'] = ""
-    combined['ExUS Author'] = ""
+    for col in ['Campaign', 'Phase', 'Products', 'PreOrder', 'Outlet Group', 'Outlet', 'ExUS Author']:
+        combined[col] = ""
 
     # Map Outlet Group and Outlet
     outlet_map = detailed_list[['Outlet Name', 'Vertical (FOR VLOOKUP)']].dropna()
@@ -74,17 +93,11 @@ if sprinklr_file and cision_file:
     combined['ExUS Author'] = combined['key'].apply(lambda x: 'Yes' if x in exus_keys else '')
     combined.drop(columns=['key'], inplace=True)
 
-    # Mark duplicates (only later ones)
-    combined['Permalink_lower'] = combined['Permalink'].str.lower()
-    combined['?'] = combined.duplicated(subset=['Permalink_lower'], keep='first').map({True: 'R', False: ''})
-    combined.drop(columns=['Permalink_lower'], inplace=True)
-
-    # Reorder columns as per final template
+    # Reorder columns
     final_cols = [
         'CreatedTime', 'Source', 'Publication Name', 'Outlet Group', 'Outlet',
-        'Media Title', 'Permalink', '?', 'Campaign', 'Phase', 'Products', 'PreOrder',
-        'Journalist', 'Sentiment', 'Country', 'Total News Media Potential Reach',
-        'Web shares overall', 'EMV', 'ExUS Author'
+        'Media Title', 'Permalink', 'Resolved_Permalink', '?', 'Campaign', 'Phase', 'Products', 'PreOrder',
+        'Journalist', 'Sentiment', 'ExUS Author'
     ]
 
     for col in final_cols:
@@ -92,6 +105,10 @@ if sprinklr_file and cision_file:
             combined[col] = ""
 
     combined = combined[final_cols]
+
+    # Make URLs clickable
+    combined['Permalink'] = combined['Permalink'].apply(lambda x: f'=HYPERLINK("{x}", "Link")')
+    combined['Resolved_Permalink'] = combined['Resolved_Permalink'].apply(lambda x: f'=HYPERLINK("{x}", "Resolved")')
 
     st.success("✅ Processing complete! Download your combined file below:")
 
