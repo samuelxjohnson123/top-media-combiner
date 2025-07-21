@@ -26,7 +26,18 @@ if sprinklr_file and cision_file:
     detailed_list = master_xl.parse("Detailed List for Msmt")
     journalist_check = master_xl.parse("Journalist Check")
 
-    # Only actually rename columns that need to change
+    # Rename Cision columns to match Sprinklr template
+    cision = cision.rename(columns={
+        "Date": "CreatedTime",
+        "Media Type": "Source",
+        "Media Outlet": "Publication Name",
+        "Title": "Media Title",
+        "Link": "Permalink",
+        "Author": "Journalist",
+        "Sentiment": "Sentiment"
+    })
+
+    # Only actually rename Sprinklr columns that need to change
     sprinklr = sprinklr.rename(columns={
         "Conversation Stream": "Media Title",
         "Resolved_URL": "Permalink"
