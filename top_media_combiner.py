@@ -78,7 +78,10 @@ if sprinklr_file and cision_file:
     ]
 
     # Reindex to ensure same shape
+    # Deduplicate columns first
+    sprinklr = sprinklr.loc[:, ~sprinklr.columns.duplicated()].copy()
     sprinklr = sprinklr.reindex(columns=common_cols, fill_value="")
+
     cision = cision.reindex(columns=common_cols, fill_value="")
 
     # Combine both datasets
