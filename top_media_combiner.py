@@ -5,7 +5,7 @@ from io import BytesIO
 st.title("📊 Top Media Combiner")
 
 st.markdown("""
-Upload your daily **Sprinklr** and **Cision** files, and the **2025_Master Outlet List.xlsx**. This app will:
+Upload your daily **Sprinklr** and **Cision** files. This app will:
 
 ✅ Combine & align columns  
 ✅ Mark duplicates (only later ones) with `R` in `?`  
@@ -16,12 +16,11 @@ Upload your daily **Sprinklr** and **Cision** files, and the **2025_Master Outle
 
 sprinklr_file = st.file_uploader("Upload Sprinklr file (.xlsx)", type="xlsx")
 cision_file = st.file_uploader("Upload Cision file (.csv)", type="csv")
-master_file = st.file_uploader("Upload Master Outlet List (.xlsx)", type="xlsx")
 
-if sprinklr_file and cision_file and master_file:
+if sprinklr_file and cision_file:
     sprinklr = pd.read_excel(sprinklr_file)
     cision = pd.read_csv(cision_file)
-    master_xl = pd.ExcelFile(master_file)
+    master_xl = pd.ExcelFile("2025_Master Outlet List.xlsx")
 
     detailed_list = master_xl.parse("Detailed List for Msmt")
     journalist_check = master_xl.parse("Journalist Check")
@@ -101,4 +100,4 @@ if sprinklr_file and cision_file and master_file:
     )
 
 else:
-    st.info("⬆️ Please upload all three files to begin.")
+    st.info("⬆️ Please upload both files to begin.")
