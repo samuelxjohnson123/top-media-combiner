@@ -3,6 +3,8 @@ import pandas as pd
 from io import BytesIO
 import os
 import requests
+from openpyxl import load_workbook
+from openpyxl.styles import Font, Alignment
 
 st.title("📊 Top Media Combiner")
 
@@ -19,7 +21,8 @@ Upload your daily **Sprinklr** and **Cision** files. This app will:
 ✅ Make URLs clickable, showing full resolved URL text  
 ✅ Format dates as `m/d/yyyy`  
 ✅ Add blank columns for manual entry  
-✅ Show live progress bar during URL resolution
+✅ Show live progress bar during URL resolution  
+✅ Styled header: bold, centered, blue text, with filters
 """)
 
 sprinklr_file = st.file_uploader("Upload Sprinklr file (.xlsx or .csv)", type=["xlsx", "csv"])
@@ -129,7 +132,6 @@ if sprinklr_file and cision_file:
     for col in ['?', 'Campaign', 'Phase', 'Products', 'PreOrder', 'Group', 'Outlet', 'ExUS Author']:
         combined[col] = ""
 
-    # Build master_map with all keys
     master_map = {}
     for _, row in detailed_list.iterrows():
         group = row['Vertical (FOR VLOOKUP)']
@@ -207,13 +209,32 @@ if sprinklr_file and cision_file:
 
     combined = combined[final_cols]
 
-    st.success("✅ Processing complete! Download your combined file below:")
-
+    # Write and style Excel
     out = BytesIO()
     combined.to_excel(out, index=False, engine='openpyxl')
+    out.seek(0)
+
+    wb = load_workbook(out)
+    ws = wb.active
+
+    ws.auto_filter.ref = ws.dimensions
+
+    header_font = Font(bold=True, color="0000F5")
+    header_alignment = Alignment(horizontal='center')
+
+    for cell in ws[1]:
+        cell.font = header_font
+        cell.alignment = header_alignment
+
+    styled_out = BytesIO()
+    wb.save(styled_out)
+    styled_out.seek(0)
+
+    st.success("✅ Processing complete! Download your combined file below:")
+
     st.download_button(
         label="📥 Download Combined File",
-        data=out.getvalue(),
+        data=styled_out.getvalue(),
         file_name="Top_Media_Combined.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
