@@ -5,6 +5,7 @@ import os
 import requests
 from openpyxl import load_workbook
 from openpyxl.styles import Font, Alignment
+from openpyxl.utils import get_column_letter
 
 st.title("📊 Top Media Combiner")
 
@@ -22,7 +23,8 @@ Upload your daily **Sprinklr** and **Cision** files. This app will:
 ✅ Format dates as `m/d/yyyy`  
 ✅ Add blank columns for manual entry  
 ✅ Show live progress bar during URL resolution  
-✅ Styled header: bold, centered, blue text, with filters
+✅ Styled header: bold, centered, blue text, with filters  
+✅ Column widths: `Media Title` & `Permalink` → 40.5, `Outlet` → 18
 """)
 
 sprinklr_file = st.file_uploader("Upload Sprinklr file (.xlsx or .csv)", type=["xlsx", "csv"])
@@ -225,6 +227,20 @@ if sprinklr_file and cision_file:
     for cell in ws[1]:
         cell.font = header_font
         cell.alignment = header_alignment
+
+    # Set specific column widths
+    col_widths = {
+        "Media Title": 40.5,
+        "Permalink": 40.5,
+        "Outlet": 18
+    }
+
+    header_map = {cell.value: cell.column for cell in ws[1]}
+
+    for col_name, width in col_widths.items():
+        if col_name in header_map:
+            col_letter = get_column_letter(header_map[col_name])
+            ws.column_dimensions[col_letter].width = width
 
     styled_out = BytesIO()
     wb.save(styled_out)
