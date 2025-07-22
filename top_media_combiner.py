@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 import os
+import requests
 
 st.title("📊 Top Media Combiner")
 
@@ -9,9 +10,10 @@ st.markdown("""
 Upload your daily **Sprinklr** and **Cision** files. This app will:
 
 ✅ Combine & align columns  
+✅ Resolve programmatic URLs to final destination for deduplication  
 ✅ Mark duplicates (only later ones) with `R` in `?`  
 ✅ Mark `ExUS Author` rows as `R`  
-✅ Map `Outlet Group` & `Outlet` from master list (case-insensitive)  
+✅ Map `Group` & `Outlet` from master list (case-insensitive)  
 ✅ Make URLs clickable, showing full URL text  
 ✅ Format dates as `m/d/yyyy`  
 ✅ Add blank columns for manual entry  
@@ -27,14 +29,22 @@ if not os.path.exists(MASTER_FILE):
 
 master_xl = pd.ExcelFile(MASTER_FILE)
 
+@st.cache_data(show_spinner=False)  # caches resolved URLs for session
+def resolve_url(url):
+    if pd.isna(url) or url == "":
+        return ""
+    try:
+        r = requests.head(url, allow_redirects=True, timeout=5)
+        return r.url
+    except:
+        return url  # fallback to original if resolution fails
+
 if sprinklr_file and cision_file:
-    # Read Sprinklr
     if sprinklr_file.name.endswith(".csv"):
         sprinklr = pd.read_csv(sprinklr_file, encoding='utf-8', errors='ignore')
     else:
         sprinklr = pd.read_excel(sprinklr_file)
 
-    # Read Cision
     if cision_file.name.endswith(".csv"):
         cision = pd.read_csv(cision_file, skiprows=3, encoding='utf-8')
     else:
@@ -67,7 +77,6 @@ if sprinklr_file and cision_file:
         "Sentiment": "Sentiment"
     })
 
-    # ✅ Drop duplicate columns after renaming
     sprinklr = sprinklr.loc[:, ~sprinklr.columns.duplicated()]
     cision = cision.loc[:, ~cision.columns.duplicated()]
 
@@ -79,52 +88,50 @@ if sprinklr_file and cision_file:
     sprinklr = sprinklr.reindex(columns=common_cols, fill_value="")
     cision = cision.reindex(columns=common_cols, fill_value="")
 
-    # Normalize Publication Name to improve matching
     sprinklr['Publication Name'] = sprinklr['Publication Name'].str.strip().str.lower()
     cision['Publication Name'] = cision['Publication Name'].str.strip().str.lower()
     detailed_list['Outlet Name'] = detailed_list['Outlet Name'].str.strip().str.lower()
 
     combined = pd.concat([sprinklr, cision], ignore_index=True)
 
-    # Format dates as m/d/yyyy
     combined['CreatedTime'] = pd.to_datetime(combined['CreatedTime'], errors='coerce').dt.strftime('%-m/%-d/%Y')
 
-    # Add blank manual columns
-    for col in ['?', 'Campaign', 'Phase', 'Products', 'PreOrder', 'Outlet Group', 'Outlet', 'ExUS Author']:
+    for col in ['?', 'Campaign', 'Phase', 'Products', 'PreOrder', 'Group', 'Outlet', 'ExUS Author']:
         combined[col] = ""
 
-    # Map Outlet Group and Outlet
     outlet_map = detailed_list[['Outlet Name', 'Vertical (FOR VLOOKUP)']].dropna()
     combined = combined.merge(outlet_map, how='left', left_on='Publication Name', right_on='Outlet Name')
-    combined['Outlet Group'] = combined['Vertical (FOR VLOOKUP)']
+    combined['Group'] = combined['Vertical (FOR VLOOKUP)']
     combined['Outlet'] = combined['Outlet Name']
     combined.drop(columns=['Vertical (FOR VLOOKUP)', 'Outlet Name'], inplace=True)
 
-    # Flag ExUS authors
     journalist_check['key'] = journalist_check['Publication'].str.lower().str.strip() + "|" + journalist_check['Name'].str.lower().str.strip()
     combined['key'] = combined['Publication Name'].str.strip() + "|" + combined['Journalist'].str.lower().str.strip()
     exus_keys = set(journalist_check[journalist_check['Geo'].str.upper() == 'EXUS']['key'])
     combined['ExUS Author'] = combined['key'].apply(lambda x: 'Yes' if x in exus_keys else '')
     combined.drop(columns=['key'], inplace=True)
 
-    # Mark duplicates (only later ones) — skip rows with no URL
-    combined['Permalink_lower'] = combined['Permalink'].str.lower()
-    combined['?'] = ''
-    mask_with_url = combined['Permalink_lower'].notna() & (combined['Permalink_lower'] != "")
-    combined.loc[mask_with_url & combined.duplicated(subset=['Permalink_lower'], keep='first'), '?'] = 'R'
+    st.info("🔄 Resolving final URLs for deduplication… (this may take a moment)")
+    combined['Resolved_Permalink'] = combined['Permalink'].apply(resolve_url)
+    combined['Resolved_Permalink_lower'] = combined['Resolved_Permalink'].str.lower()
 
-    # Mark ExUS authors as R
+    mask_with_url = combined['Resolved_Permalink_lower'].notna() & (combined['Resolved_Permalink_lower'] != "")
+    combined['?'] = ''
+    combined.loc[
+        mask_with_url & combined.duplicated(subset=['Resolved_Permalink_lower'], keep='first'),
+        '?'
+    ] = 'R'
+
     combined.loc[combined['ExUS Author'] == 'Yes', '?'] = 'R'
 
-    combined.drop(columns=['Permalink_lower'], inplace=True)
+    combined.drop(columns=['Resolved_Permalink', 'Resolved_Permalink_lower'], inplace=True)
 
-    # Make URLs clickable and display full URL
     combined['Permalink'] = combined['Permalink'].apply(
         lambda x: f'=HYPERLINK("{x}", "{x}")' if pd.notna(x) and x != "" else ""
     )
 
     final_cols = [
-        'CreatedTime', 'Source', 'Publication Name', 'Outlet Group', 'Outlet',
+        'CreatedTime', 'Source', 'Publication Name', 'Group', 'Outlet',
         'Media Title', 'Permalink', '?', 'Campaign', 'Phase', 'Products', 'PreOrder',
         'Journalist', 'Sentiment', 'Country', 'Total News Media Potential Reach',
         'Web shares overall', 'EMV', 'ExUS Author'
