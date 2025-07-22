@@ -27,7 +27,7 @@ Upload your daily **Sprinklr** and **Cision** files. This app will:
 ✅ Styled header: bold, centered, blue text, with filters  
 ✅ Column widths: `Media Title` & `Permalink` → 40.5, `Outlet` → 18  
 ✅ `Permalink` cells: clipped, no wrap, no spillover  
-✅ Include `Source Platform` column (`Sprinklr` or `Cision`)
+✅ `Source Platform` column (`Sprinklr` or `Cision`) at the end
 """)
 
 sprinklr_file = st.file_uploader("Upload Sprinklr file (.xlsx or .csv)", type=["xlsx", "csv"])
@@ -101,7 +101,6 @@ if sprinklr_file and cision_file:
     sprinklr.columns = sprinklr.columns.str.strip()
     cision.columns = cision.columns.str.strip()
 
-    # Add source platform column to each
     sprinklr['Source Platform'] = 'Sprinklr'
     cision['Source Platform'] = 'Cision'
 
@@ -123,7 +122,6 @@ if sprinklr_file and cision_file:
         "Sentiment": "Sentiment"
     })
 
-    # Clean up Cision Permalink
     cision['Permalink'] = cision['Permalink'].apply(extract_cision_url)
 
     sprinklr = sprinklr.loc[:, ~sprinklr.columns.duplicated()]
@@ -214,9 +212,9 @@ if sprinklr_file and cision_file:
 
     final_cols = [
         'CreatedTime', 'Source', 'Publication Name', 'Group', 'Outlet',
-        'Media Title', 'Permalink', 'Source Platform', '?', 'Campaign', 'Phase', 'Products', 'PreOrder',
+        'Media Title', 'Permalink', '?', 'Campaign', 'Phase', 'Products', 'PreOrder',
         'Journalist', 'Sentiment', 'Country', 'Total News Media Potential Reach',
-        'Web shares overall', 'EMV', 'ExUS Author'
+        'Web shares overall', 'EMV', 'ExUS Author', 'Source Platform'
     ]
 
     for col in final_cols:
@@ -256,9 +254,17 @@ if sprinklr_file and cision_file:
 
     if "Permalink" in header_map:
         permalink_col_letter = get_column_letter(header_map["Permalink"])
-        for row in ws.iter_rows(min_row=2, min_col=ws[permalink_col_letter+'1'].column, max_col=ws[permalink_col_letter+'1'].column):
+        for row in ws.iter_rows(
+            min_row=2,
+            min_col=ws[permalink_col_letter+'1'].column,
+            max_col=ws[permalink_col_letter+'1'].column
+        ):
             for cell in row:
-                cell.alignment = Alignment(wrap_text=False, horizontal='left')
+                cell.alignment = Alignment(
+                    wrap_text=False,
+                    horizontal='left',
+                    shrink_to_fit=False
+                )
 
     styled_out = BytesIO()
     wb.save(styled_out)
