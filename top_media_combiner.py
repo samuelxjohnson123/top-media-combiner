@@ -67,6 +67,10 @@ if sprinklr_file and cision_file:
         "Sentiment": "Sentiment"
     })
 
+    # ✅ Drop duplicate columns after renaming
+    sprinklr = sprinklr.loc[:, ~sprinklr.columns.duplicated()]
+    cision = cision.loc[:, ~cision.columns.duplicated()]
+
     common_cols = [
         "CreatedTime", "Source", "Publication Name", "Media Title",
         "Permalink", "Journalist", "Sentiment"
