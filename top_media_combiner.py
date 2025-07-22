@@ -24,7 +24,8 @@ Upload your daily **Sprinklr** and **Cision** files. This app will:
 ✅ Add blank columns for manual entry  
 ✅ Show live progress bar during URL resolution  
 ✅ Styled header: bold, centered, blue text, with filters  
-✅ Column widths: `Media Title` & `Permalink` → 40.5, `Outlet` → 18
+✅ Column widths: `Media Title` & `Permalink` → 40.5, `Outlet` → 18  
+✅ `Permalink` cells: clipped, no wrap, no spillover
 """)
 
 sprinklr_file = st.file_uploader("Upload Sprinklr file (.xlsx or .csv)", type=["xlsx", "csv"])
@@ -241,6 +242,18 @@ if sprinklr_file and cision_file:
         if col_name in header_map:
             col_letter = get_column_letter(header_map[col_name])
             ws.column_dimensions[col_letter].width = width
+
+    # Adjust Permalink cell alignment to clip and not wrap
+    permalink_col_letter = None
+    for cell in ws[1]:
+        if cell.value == "Permalink":
+            permalink_col_letter = get_column_letter(cell.column)
+            break
+
+    if permalink_col_letter:
+        for row in ws.iter_rows(min_row=2, min_col=ws[permalink_col_letter+'1'].column, max_col=ws[permalink_col_letter+'1'].column):
+            for cell in row:
+                cell.alignment = Alignment(wrap_text=False, horizontal='left')
 
     styled_out = BytesIO()
     wb.save(styled_out)
