@@ -10,16 +10,16 @@ Upload your daily **Sprinklr** and **Cision** files. This app will:
 
 ✅ Combine & align columns  
 ✅ Mark duplicates (only later ones) with `R` in `?`  
-✅ Map `Outlet Group` & `Outlet` from master list  
-✅ Flag `ExUS Author` in a new column  
+✅ Mark `ExUS Author` rows as `R`  
+✅ Map `Outlet Group` & `Outlet` from master list (case-insensitive)  
+✅ Make URLs clickable, showing full URL text  
+✅ Format dates as `m/d/yyyy`  
 ✅ Add blank columns for manual entry  
-✅ Make URLs clickable in Excel
 """)
 
 sprinklr_file = st.file_uploader("Upload Sprinklr file (.xlsx or .csv)", type=["xlsx", "csv"])
 cision_file = st.file_uploader("Upload Cision file (.xlsx or .csv)", type=["xlsx", "csv"])
 
-# Check that master list exists
 MASTER_FILE = "2025_Master Outlet List.xlsx"
 if not os.path.exists(MASTER_FILE):
     st.error(f"Master outlet list file `{MASTER_FILE}` not found in app folder.")
@@ -40,22 +40,18 @@ if sprinklr_file and cision_file:
     else:
         cision = pd.read_excel(cision_file, skiprows=3)
 
-    # Clean up blanks
     cision.dropna(how='all', inplace=True)
 
     if sprinklr.empty or cision.empty:
         st.error("One of the uploaded files appears to be empty or malformed.")
         st.stop()
 
-    # Strip column names
     sprinklr.columns = sprinklr.columns.str.strip()
     cision.columns = cision.columns.str.strip()
 
-    # Master sheets
     detailed_list = master_xl.parse("Detailed List for Msmt")
     journalist_check = master_xl.parse("Journalist Check")
 
-    # Rename Sprinklr where needed
     sprinklr = sprinklr.rename(columns={
         "Conversation Stream": "Media Title",
         "Resolved_URL": "Permalink"
@@ -71,21 +67,23 @@ if sprinklr_file and cision_file:
         "Sentiment": "Sentiment"
     })
 
-    # Define expected columns
     common_cols = [
         "CreatedTime", "Source", "Publication Name", "Media Title",
         "Permalink", "Journalist", "Sentiment"
     ]
 
-    # Reindex to ensure same shape
-    # Deduplicate columns first
-    sprinklr = sprinklr.loc[:, ~sprinklr.columns.duplicated()].copy()
     sprinklr = sprinklr.reindex(columns=common_cols, fill_value="")
-
     cision = cision.reindex(columns=common_cols, fill_value="")
 
-    # Combine both datasets
+    # Normalize Publication Name to improve matching
+    sprinklr['Publication Name'] = sprinklr['Publication Name'].str.strip().str.lower()
+    cision['Publication Name'] = cision['Publication Name'].str.strip().str.lower()
+    detailed_list['Outlet Name'] = detailed_list['Outlet Name'].str.strip().str.lower()
+
     combined = pd.concat([sprinklr, cision], ignore_index=True)
+
+    # Format dates as m/d/yyyy
+    combined['CreatedTime'] = pd.to_datetime(combined['CreatedTime'], errors='coerce').dt.strftime('%-m/%-d/%Y')
 
     # Add blank manual columns
     for col in ['?', 'Campaign', 'Phase', 'Products', 'PreOrder', 'Outlet Group', 'Outlet', 'ExUS Author']:
@@ -99,21 +97,28 @@ if sprinklr_file and cision_file:
     combined.drop(columns=['Vertical (FOR VLOOKUP)', 'Outlet Name'], inplace=True)
 
     # Flag ExUS authors
-    journalist_check['key'] = journalist_check['Publication'].str.lower() + "|" + journalist_check['Name'].str.lower()
-    combined['key'] = combined['Publication Name'].str.lower() + "|" + combined['Journalist'].str.lower()
+    journalist_check['key'] = journalist_check['Publication'].str.lower().str.strip() + "|" + journalist_check['Name'].str.lower().str.strip()
+    combined['key'] = combined['Publication Name'].str.strip() + "|" + combined['Journalist'].str.lower().str.strip()
     exus_keys = set(journalist_check[journalist_check['Geo'].str.upper() == 'EXUS']['key'])
     combined['ExUS Author'] = combined['key'].apply(lambda x: 'Yes' if x in exus_keys else '')
     combined.drop(columns=['key'], inplace=True)
 
-    # Mark duplicates (only later ones)
+    # Mark duplicates (only later ones) — skip rows with no URL
     combined['Permalink_lower'] = combined['Permalink'].str.lower()
-    combined['?'] = combined.duplicated(subset=['Permalink_lower'], keep='first').map({True: 'R', False: ''})
+    combined['?'] = ''
+    mask_with_url = combined['Permalink_lower'].notna() & (combined['Permalink_lower'] != "")
+    combined.loc[mask_with_url & combined.duplicated(subset=['Permalink_lower'], keep='first'), '?'] = 'R'
+
+    # Mark ExUS authors as R
+    combined.loc[combined['ExUS Author'] == 'Yes', '?'] = 'R'
+
     combined.drop(columns=['Permalink_lower'], inplace=True)
 
-    # Make URLs clickable
-    combined['Permalink'] = combined['Permalink'].apply(lambda x: f'=HYPERLINK("{x}", "Link")' if pd.notna(x) else "")
+    # Make URLs clickable and display full URL
+    combined['Permalink'] = combined['Permalink'].apply(
+        lambda x: f'=HYPERLINK("{x}", "{x}")' if pd.notna(x) and x != "" else ""
+    )
 
-    # Reorder columns
     final_cols = [
         'CreatedTime', 'Source', 'Publication Name', 'Outlet Group', 'Outlet',
         'Media Title', 'Permalink', '?', 'Campaign', 'Phase', 'Products', 'PreOrder',
