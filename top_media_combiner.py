@@ -12,7 +12,8 @@ Upload your daily **Sprinklr** and **Cision** files. This app will:
 ✅ Combine & align columns  
 ✅ Resolve programmatic URLs to final destination for deduplication  
 ✅ Show resolved URLs in the output for manual checking  
-✅ Map `Group` & `Outlet` from URL patterns or master list  
+✅ Map `Group` & `Outlet` from URL patterns or master list (including domains)  
+✅ Retain proper casing from master list  
 ✅ Mark duplicates (only later ones) with `R` in `?`  
 ✅ Mark `ExUS Author` rows as `R`  
 ✅ Make URLs clickable, showing full resolved URL text  
@@ -41,31 +42,31 @@ def resolve_url(url):
         return url
 
 def map_group_outlet(url, pub_name, master_map):
-    url = str(url).lower()
+    url_lc = str(url).lower()
     pub_name_lc = str(pub_name).strip().lower()
 
     # Hard-coded rules
-    if any(p in url for p in ["msn.com/en-us", "msn.com/es-us"]):
+    if any(p in url_lc for p in ["msn.com/en-us", "msn.com/es-us"]):
         return "Tech", "MSN"
-    if any(p in url for p in ["msn.com", "uk.news.yahoo", "ca.news.yahoo", "currently.att.yahoo"]):
+    if any(p in url_lc for p in ["msn.com", "uk.news.yahoo", "ca.news.yahoo", "currently.att.yahoo"]):
         return "REMOVE", "REMOVE"
-    if "sports.yahoo" in url:
+    if "sports.yahoo" in url_lc:
         return "Lifestyle", "Yahoo! Sports"
-    if "yahoo.com/entertainment" in url:
+    if "yahoo.com/entertainment" in url_lc:
         return "Lifestyle", "Yahoo! Entertainment"
-    if "yahoo.com/lifestyle" in url:
+    if "yahoo.com/lifestyle" in url_lc:
         return "Lifestyle", "Yahoo! Lifestyle"
-    if "finance.yahoo.com" in url:
+    if "finance.yahoo.com" in url_lc:
         return "Tech", "Yahoo! Finance"
-    if "yahoo.com/news" in url:
+    if "yahoo.com/news" in url_lc:
         return "Tech", "Yahoo! News"
-    if "yahoo.com/tech" in url:
+    if "yahoo.com/tech" in url_lc:
         return "Tech", "Yahoo! Tech"
 
     # fallback to master list
-    match = master_map.get(pub_name_lc)
-    if match:
-        return match['Group'], match['Outlet']
+    for key in [pub_name_lc, url_lc]:
+        if key in master_map:
+            return master_map[key]['Group'], master_map[key]['Outlet']
     return "", ""
 
 if sprinklr_file and cision_file:
@@ -128,13 +129,18 @@ if sprinklr_file and cision_file:
     for col in ['?', 'Campaign', 'Phase', 'Products', 'PreOrder', 'Group', 'Outlet', 'ExUS Author']:
         combined[col] = ""
 
-    master_map = {
-        row['Outlet Name'].strip().lower(): {
-            'Group': row['Vertical (FOR VLOOKUP)'],
-            'Outlet': row['Outlet Name']
-        }
-        for _, row in detailed_list.iterrows()
-    }
+    # Build master_map with all keys
+    master_map = {}
+    for _, row in detailed_list.iterrows():
+        group = row['Vertical (FOR VLOOKUP)']
+        outlet = row['Outlet Name']
+        for key in [
+            str(row['Outlet Name']).strip().lower(),
+            str(row['Outlet Name From Searches']).strip().lower(),
+            str(row['URL']).strip().lower()
+        ]:
+            if key and key != 'nan':
+                master_map[key] = {'Group': group, 'Outlet': outlet}
 
     journalist_check['key'] = journalist_check['Publication'].str.lower().str.strip() + "|" + journalist_check['Name'].str.lower().str.strip()
     combined['key'] = combined['Publication Name'].str.lower().str.strip() + "|" + combined['Journalist'].str.lower().str.strip()
