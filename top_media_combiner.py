@@ -18,6 +18,7 @@ Upload your daily **Sprinklr** and **Cision** files. This app will:
 ✅ Make URLs clickable, showing full resolved URL text  
 ✅ Format dates as `m/d/yyyy`  
 ✅ Add blank columns for manual entry  
+✅ Show live progress bar during URL resolution
 """)
 
 sprinklr_file = st.file_uploader("Upload Sprinklr file (.xlsx or .csv)", type=["xlsx", "csv"])
@@ -30,7 +31,6 @@ if not os.path.exists(MASTER_FILE):
 
 master_xl = pd.ExcelFile(MASTER_FILE)
 
-@st.cache_data(show_spinner=False)  # caches resolved URLs for session
 def resolve_url(url):
     if pd.isna(url) or url == "":
         return ""
@@ -112,8 +112,23 @@ if sprinklr_file and cision_file:
     combined['ExUS Author'] = combined['key'].apply(lambda x: 'Yes' if x in exus_keys else '')
     combined.drop(columns=['key'], inplace=True)
 
-    st.info("🔄 Resolving final URLs for deduplication… (this may take a moment)")
-    combined['Resolved_Permalink'] = combined['Permalink'].apply(resolve_url)
+    st.info("🔄 Resolving final URLs for deduplication…")
+    progress_bar = st.progress(0, text="Resolving URLs… 0%")
+    status_text = st.empty()
+
+    resolved_urls = []
+    n_rows = len(combined)
+
+    for idx, url in enumerate(combined['Permalink']):
+        resolved = resolve_url(url)
+        resolved_urls.append(resolved)
+        pct_complete = (idx + 1) / n_rows
+        progress_bar.progress(pct_complete, text=f"Resolving URLs… {idx+1}/{n_rows}")
+        status_text.text(f"Resolved {idx+1} of {n_rows}")
+
+    status_text.text("✅ URL resolution complete.")
+    combined['Resolved_Permalink'] = resolved_urls
+
     combined['Resolved_Permalink_lower'] = combined['Resolved_Permalink'].str.lower()
 
     mask_with_url = combined['Resolved_Permalink_lower'].notna() & (combined['Resolved_Permalink_lower'] != "")
