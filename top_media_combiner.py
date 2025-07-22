@@ -12,9 +12,9 @@ Upload your daily **Sprinklr** and **Cision** files. This app will:
 ✅ Combine & align columns  
 ✅ Resolve programmatic URLs to final destination for deduplication  
 ✅ Show resolved URLs in the output for manual checking  
+✅ Map `Group` & `Outlet` from URL patterns or master list  
 ✅ Mark duplicates (only later ones) with `R` in `?`  
 ✅ Mark `ExUS Author` rows as `R`  
-✅ Map `Group` & `Outlet` from master list (case-insensitive)  
 ✅ Make URLs clickable, showing full resolved URL text  
 ✅ Format dates as `m/d/yyyy`  
 ✅ Add blank columns for manual entry  
@@ -38,7 +38,35 @@ def resolve_url(url):
         r = requests.head(url, allow_redirects=True, timeout=5)
         return r.url
     except:
-        return url  # fallback to original if resolution fails
+        return url
+
+def map_group_outlet(url, pub_name, master_map):
+    url = str(url).lower()
+    pub_name_lc = str(pub_name).strip().lower()
+
+    # Hard-coded rules
+    if any(p in url for p in ["msn.com/en-us", "msn.com/es-us"]):
+        return "Tech", "MSN"
+    if any(p in url for p in ["msn.com", "uk.news.yahoo", "ca.news.yahoo", "currently.att.yahoo"]):
+        return "REMOVE", "REMOVE"
+    if "sports.yahoo" in url:
+        return "Lifestyle", "Yahoo! Sports"
+    if "yahoo.com/entertainment" in url:
+        return "Lifestyle", "Yahoo! Entertainment"
+    if "yahoo.com/lifestyle" in url:
+        return "Lifestyle", "Yahoo! Lifestyle"
+    if "finance.yahoo.com" in url:
+        return "Tech", "Yahoo! Finance"
+    if "yahoo.com/news" in url:
+        return "Tech", "Yahoo! News"
+    if "yahoo.com/tech" in url:
+        return "Tech", "Yahoo! Tech"
+
+    # fallback to master list
+    match = master_map.get(pub_name_lc)
+    if match:
+        return match['Group'], match['Outlet']
+    return "", ""
 
 if sprinklr_file and cision_file:
     if sprinklr_file.name.endswith(".csv"):
@@ -89,9 +117,9 @@ if sprinklr_file and cision_file:
     sprinklr = sprinklr.reindex(columns=common_cols, fill_value="")
     cision = cision.reindex(columns=common_cols, fill_value="")
 
-    sprinklr['Publication Name'] = sprinklr['Publication Name'].str.strip().str.lower()
-    cision['Publication Name'] = cision['Publication Name'].str.strip().str.lower()
-    detailed_list['Outlet Name'] = detailed_list['Outlet Name'].str.strip().str.lower()
+    sprinklr['Publication Name'] = sprinklr['Publication Name'].str.strip()
+    cision['Publication Name'] = cision['Publication Name'].str.strip()
+    detailed_list['Outlet Name'] = detailed_list['Outlet Name'].str.strip()
 
     combined = pd.concat([sprinklr, cision], ignore_index=True)
 
@@ -100,34 +128,45 @@ if sprinklr_file and cision_file:
     for col in ['?', 'Campaign', 'Phase', 'Products', 'PreOrder', 'Group', 'Outlet', 'ExUS Author']:
         combined[col] = ""
 
-    outlet_map = detailed_list[['Outlet Name', 'Vertical (FOR VLOOKUP)']].dropna()
-    combined = combined.merge(outlet_map, how='left', left_on='Publication Name', right_on='Outlet Name')
-    combined['Group'] = combined['Vertical (FOR VLOOKUP)']
-    combined['Outlet'] = combined['Outlet Name']
-    combined.drop(columns=['Vertical (FOR VLOOKUP)', 'Outlet Name'], inplace=True)
+    master_map = {
+        row['Outlet Name'].strip().lower(): {
+            'Group': row['Vertical (FOR VLOOKUP)'],
+            'Outlet': row['Outlet Name']
+        }
+        for _, row in detailed_list.iterrows()
+    }
 
     journalist_check['key'] = journalist_check['Publication'].str.lower().str.strip() + "|" + journalist_check['Name'].str.lower().str.strip()
-    combined['key'] = combined['Publication Name'].str.strip() + "|" + combined['Journalist'].str.lower().str.strip()
+    combined['key'] = combined['Publication Name'].str.lower().str.strip() + "|" + combined['Journalist'].str.lower().str.strip()
     exus_keys = set(journalist_check[journalist_check['Geo'].str.upper() == 'EXUS']['key'])
     combined['ExUS Author'] = combined['key'].apply(lambda x: 'Yes' if x in exus_keys else '')
     combined.drop(columns=['key'], inplace=True)
 
-    st.info("🔄 Resolving final URLs for deduplication…")
+    st.info("🔄 Resolving final URLs for deduplication and mapping…")
     progress_bar = st.progress(0, text="Resolving URLs… 0%")
     status_text = st.empty()
 
     resolved_urls = []
+    groups = []
+    outlets = []
     n_rows = len(combined)
 
-    for idx, url in enumerate(combined['Permalink']):
-        resolved = resolve_url(url)
+    for idx, row in combined.iterrows():
+        resolved = resolve_url(row['Permalink'])
         resolved_urls.append(resolved)
-        pct_complete = (idx + 1) / n_rows
-        progress_bar.progress(pct_complete, text=f"Resolving URLs… {idx+1}/{n_rows}")
-        status_text.text(f"Resolved {idx+1} of {n_rows}")
 
-    status_text.text("✅ URL resolution complete.")
+        group, outlet = map_group_outlet(resolved, row['Publication Name'], master_map)
+        groups.append(group)
+        outlets.append(outlet)
+
+        pct_complete = (idx + 1) / n_rows
+        progress_bar.progress(pct_complete, text=f"Processing… {idx+1}/{n_rows}")
+        status_text.text(f"Processed {idx+1} of {n_rows}")
+
+    status_text.text("✅ URL resolution and mapping complete.")
     combined['Resolved_Permalink'] = resolved_urls
+    combined['Group'] = groups
+    combined['Outlet'] = outlets
 
     combined['Resolved_Permalink_lower'] = combined['Resolved_Permalink'].str.lower()
 
@@ -142,11 +181,9 @@ if sprinklr_file and cision_file:
 
     combined.drop(columns=['Resolved_Permalink_lower'], inplace=True)
 
-    # ✅ Overwrite Permalink with resolved URL
     combined['Permalink'] = combined['Resolved_Permalink']
     combined.drop(columns=['Resolved_Permalink'], inplace=True)
 
-    # ✅ Format Permalink as clickable Excel link with resolved URL as display text
     combined['Permalink'] = combined['Permalink'].apply(
         lambda x: f'=HYPERLINK("{x}", "{x}")' if pd.notna(x) and x != "" else ""
     )
