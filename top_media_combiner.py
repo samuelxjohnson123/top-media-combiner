@@ -6,6 +6,7 @@ import requests
 from openpyxl import load_workbook
 from openpyxl.styles import Font, Alignment
 from openpyxl.utils import get_column_letter
+import re
 
 st.title("📊 Top Media Combiner")
 
@@ -25,7 +26,8 @@ Upload your daily **Sprinklr** and **Cision** files. This app will:
 ✅ Show live progress bar during URL resolution  
 ✅ Styled header: bold, centered, blue text, with filters  
 ✅ Column widths: `Media Title` & `Permalink` → 40.5, `Outlet` → 18  
-✅ `Permalink` cells: clipped, no wrap, no spillover
+✅ `Permalink` cells: clipped, no wrap, no spillover  
+✅ Include `Source Platform` column (`Sprinklr` or `Cision`)
 """)
 
 sprinklr_file = st.file_uploader("Upload Sprinklr file (.xlsx or .csv)", type=["xlsx", "csv"])
@@ -51,7 +53,6 @@ def map_group_outlet(url, pub_name, master_map):
     url_lc = str(url).lower()
     pub_name_lc = str(pub_name).strip().lower()
 
-    # Hard-coded rules
     if any(p in url_lc for p in ["msn.com/en-us", "msn.com/es-us"]):
         return "Tech", "MSN"
     if any(p in url_lc for p in ["msn.com", "uk.news.yahoo", "ca.news.yahoo", "currently.att.yahoo"]):
@@ -69,11 +70,16 @@ def map_group_outlet(url, pub_name, master_map):
     if "yahoo.com/tech" in url_lc:
         return "Tech", "Yahoo! Tech"
 
-    # fallback to master list
     for key in [pub_name_lc, url_lc]:
         if key in master_map:
             return master_map[key]['Group'], master_map[key]['Outlet']
     return "", ""
+
+def extract_cision_url(cell):
+    if pd.isna(cell):
+        return ""
+    match = re.search(r'HYPERLINK\("([^"]+)"', str(cell))
+    return match.group(1) if match else str(cell)
 
 if sprinklr_file and cision_file:
     if sprinklr_file.name.endswith(".csv"):
@@ -95,6 +101,10 @@ if sprinklr_file and cision_file:
     sprinklr.columns = sprinklr.columns.str.strip()
     cision.columns = cision.columns.str.strip()
 
+    # Add source platform column to each
+    sprinklr['Source Platform'] = 'Sprinklr'
+    cision['Source Platform'] = 'Cision'
+
     detailed_list = master_xl.parse("Detailed List for Msmt")
     journalist_check = master_xl.parse("Journalist Check")
 
@@ -113,12 +123,15 @@ if sprinklr_file and cision_file:
         "Sentiment": "Sentiment"
     })
 
+    # Clean up Cision Permalink
+    cision['Permalink'] = cision['Permalink'].apply(extract_cision_url)
+
     sprinklr = sprinklr.loc[:, ~sprinklr.columns.duplicated()]
     cision = cision.loc[:, ~cision.columns.duplicated()]
 
     common_cols = [
         "CreatedTime", "Source", "Publication Name", "Media Title",
-        "Permalink", "Journalist", "Sentiment"
+        "Permalink", "Journalist", "Sentiment", "Source Platform"
     ]
 
     sprinklr = sprinklr.reindex(columns=common_cols, fill_value="")
@@ -201,7 +214,7 @@ if sprinklr_file and cision_file:
 
     final_cols = [
         'CreatedTime', 'Source', 'Publication Name', 'Group', 'Outlet',
-        'Media Title', 'Permalink', '?', 'Campaign', 'Phase', 'Products', 'PreOrder',
+        'Media Title', 'Permalink', 'Source Platform', '?', 'Campaign', 'Phase', 'Products', 'PreOrder',
         'Journalist', 'Sentiment', 'Country', 'Total News Media Potential Reach',
         'Web shares overall', 'EMV', 'ExUS Author'
     ]
@@ -212,7 +225,6 @@ if sprinklr_file and cision_file:
 
     combined = combined[final_cols]
 
-    # Write and style Excel
     out = BytesIO()
     combined.to_excel(out, index=False, engine='openpyxl')
     out.seek(0)
@@ -229,7 +241,6 @@ if sprinklr_file and cision_file:
         cell.font = header_font
         cell.alignment = header_alignment
 
-    # Set specific column widths
     col_widths = {
         "Media Title": 40.5,
         "Permalink": 40.5,
@@ -243,14 +254,8 @@ if sprinklr_file and cision_file:
             col_letter = get_column_letter(header_map[col_name])
             ws.column_dimensions[col_letter].width = width
 
-    # Adjust Permalink cell alignment to clip and not wrap
-    permalink_col_letter = None
-    for cell in ws[1]:
-        if cell.value == "Permalink":
-            permalink_col_letter = get_column_letter(cell.column)
-            break
-
-    if permalink_col_letter:
+    if "Permalink" in header_map:
+        permalink_col_letter = get_column_letter(header_map["Permalink"])
         for row in ws.iter_rows(min_row=2, min_col=ws[permalink_col_letter+'1'].column, max_col=ws[permalink_col_letter+'1'].column):
             for cell in row:
                 cell.alignment = Alignment(wrap_text=False, horizontal='left')
