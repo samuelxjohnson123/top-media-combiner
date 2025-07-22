@@ -11,10 +11,11 @@ Upload your daily **Sprinklr** and **Cision** files. This app will:
 
 ✅ Combine & align columns  
 ✅ Resolve programmatic URLs to final destination for deduplication  
+✅ Show resolved URLs in the output for manual checking  
 ✅ Mark duplicates (only later ones) with `R` in `?`  
 ✅ Mark `ExUS Author` rows as `R`  
 ✅ Map `Group` & `Outlet` from master list (case-insensitive)  
-✅ Make URLs clickable, showing full URL text  
+✅ Make URLs clickable, showing full resolved URL text  
 ✅ Format dates as `m/d/yyyy`  
 ✅ Add blank columns for manual entry  
 """)
@@ -124,8 +125,13 @@ if sprinklr_file and cision_file:
 
     combined.loc[combined['ExUS Author'] == 'Yes', '?'] = 'R'
 
-    combined.drop(columns=['Resolved_Permalink', 'Resolved_Permalink_lower'], inplace=True)
+    combined.drop(columns=['Resolved_Permalink_lower'], inplace=True)
 
+    # ✅ Overwrite Permalink with resolved URL
+    combined['Permalink'] = combined['Resolved_Permalink']
+    combined.drop(columns=['Resolved_Permalink'], inplace=True)
+
+    # ✅ Format Permalink as clickable Excel link with resolved URL as display text
     combined['Permalink'] = combined['Permalink'].apply(
         lambda x: f'=HYPERLINK("{x}", "{x}")' if pd.notna(x) and x != "" else ""
     )
