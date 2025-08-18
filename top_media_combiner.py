@@ -107,10 +107,13 @@ if sprinklr_file and cision_file:
     detailed_list = master_xl.parse("Detailed List for Msmt")
     journalist_check = master_xl.parse("Journalist Check")
 
-    sprinklr = sprinklr.rename(columns={
-        "Conversation Stream": "Media Title",
-        "Resolved_URL": "Permalink"
-    })
+    # Keep Sprinklr's own Media Title, only rename Resolved_URL
+    rename_map = {"Resolved_URL": "Permalink"}
+    sprinklr = sprinklr.rename(columns=rename_map)
+
+    # Drop Conversation Stream if it exists (since you don’t need it)
+    if "Conversation Stream" in sprinklr.columns:
+        sprinklr = sprinklr.drop(columns=["Conversation Stream"])
 
     cision = cision.rename(columns={
         "Date": "CreatedTime",
