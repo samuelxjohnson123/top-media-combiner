@@ -44,7 +44,7 @@ def resolve_url(url):
     if pd.isna(url) or url == "":
         return ""
     try:
-        r = requests.head(url, allow_redirects=True, timeout=5)
+        r = requests.get(url, allow_redirects=True, timeout=5)
         return r.url
     except:
         return url
