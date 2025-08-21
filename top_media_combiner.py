@@ -7,6 +7,7 @@ from openpyxl import load_workbook
 from openpyxl.styles import Font, Alignment
 from openpyxl.utils import get_column_letter
 import re
+from typing import Optional
 
 st.title("📊 Top Media Combiner")
 
@@ -43,7 +44,7 @@ master_xl = pd.ExcelFile(MASTER_FILE)
 # --- MSN handling helpers ---
 _US_MSN_LOCALES = {"en-us", "es-us"}  # locales we KEEP; everything else is REMOVE
 
-def _msn_locale(path: str) -> str | None:
+def _msn_locale(path: str) -> Optional[str]:
     """
     Extracts the first path segment that looks like a locale (e.g., 'en-us', 'en-gb').
     Returns lowercase locale string or None if not present.
