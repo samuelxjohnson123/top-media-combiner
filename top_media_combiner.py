@@ -40,23 +40,55 @@ if not os.path.exists(MASTER_FILE):
 
 master_xl = pd.ExcelFile(MASTER_FILE)
 
+# --- MSN handling helpers ---
+_US_MSN_LOCALES = {"en-us", "es-us"}  # locales we KEEP; everything else is REMOVE
+
+def _msn_locale(path: str) -> str | None:
+    """
+    Extracts the first path segment that looks like a locale (e.g., 'en-us', 'en-gb').
+    Returns lowercase locale string or None if not present.
+    """
+    m = re.match(r"/([a-z]{2}-[a-z]{2})(?:/|$)", path.lower())
+    return m.group(1) if m else None
+
 def resolve_url(url):
+    """
+    For MSN links: keep the original permalink to avoid collapsing to `msn.com`.
+    For others: follow redirects via GET (stream=True to avoid full body download).
+    """
     if pd.isna(url) or url == "":
         return ""
     try:
-        r = requests.get(url, allow_redirects=True, timeout=5)
+        if "msn.com" in str(url).lower():
+            return url  # preserve full MSN permalink
+        r = requests.get(url, allow_redirects=True, timeout=5, stream=True)
         return r.url
     except:
         return url
 
 def map_group_outlet(url, pub_name, master_map):
-    url_lc = str(url).lower()
+    """
+    Maps Group/Outlet via explicit rules first, then falls back to master_map.
+    - MSN: keep only /en-us and /es-us; all other locales or no-locale => REMOVE
+    - Yahoo: map to vertical-specific brands
+    """
+    url_lc = str(url).strip().lower()
     pub_name_lc = str(pub_name).strip().lower()
 
-    if any(p in url_lc for p in ["msn.com/en-us", "msn.com/es-us"]):
-        return "Tech", "MSN"
-    if any(p in url_lc for p in ["msn.com", "uk.news.yahoo", "ca.news.yahoo", "currently.att.yahoo"]):
-        return "REMOVE", "REMOVE"
+    # --- MSN handling ---
+    if "msn.com" in url_lc:
+        # Extract the path portion safely
+        try:
+            path = re.sub(r"^[a-z]+://[^/]+", "", url_lc)  # strip scheme+host
+        except:
+            path = url_lc
+        loc = _msn_locale(path)
+        if loc in _US_MSN_LOCALES:
+            return "Tech", "MSN"
+        else:
+            return "REMOVE", "REMOVE"
+
+    # --- Yahoo handling ---
     if "sports.yahoo" in url_lc:
         return "Lifestyle", "Yahoo! Sports"
     if "yahoo.com/entertainment" in url_lc:
@@ -70,7 +102,8 @@ def map_group_outlet(url, pub_name, master_map):
     if "yahoo.com/tech" in url_lc:
         return "Tech", "Yahoo! Tech"
 
-    for key in [pub_name_lc, url_lc]:
+    # --- Master list fallback ---
+    for key in (pub_name_lc, url_lc):
         if key in master_map:
             return master_map[key]['Group'], master_map[key]['Outlet']
     return "", ""
@@ -82,6 +115,7 @@ def extract_cision_url(cell):
     return match.group(1) if match else str(cell)
 
 if sprinklr_file and cision_file:
+    # --- Load inputs ---
     if sprinklr_file.name.endswith(".csv"):
         sprinklr = pd.read_csv(sprinklr_file, encoding='utf-8', errors='ignore')
     else:
@@ -111,7 +145,7 @@ if sprinklr_file and cision_file:
     rename_map = {"Resolved_URL": "Permalink"}
     sprinklr = sprinklr.rename(columns=rename_map)
 
-    # Drop Conversation Stream if it exists (since you don’t need it)
+    # Drop Conversation Stream if it exists
     if "Conversation Stream" in sprinklr.columns:
         sprinklr = sprinklr.drop(columns=["Conversation Stream"])
 
@@ -149,6 +183,7 @@ if sprinklr_file and cision_file:
     for col in ['?', 'Campaign', 'Phase', 'Products', 'PreOrder', 'Group', 'Outlet', 'ExUS Author']:
         combined[col] = ""
 
+    # --- Build master outlet map ---
     master_map = {}
     for _, row in detailed_list.iterrows():
         group = row['Vertical (FOR VLOOKUP)']
@@ -161,12 +196,14 @@ if sprinklr_file and cision_file:
             if key and key != 'nan':
                 master_map[key] = {'Group': group, 'Outlet': outlet}
 
+    # --- ExUS author marking ---
     journalist_check['key'] = journalist_check['Publication'].str.lower().str.strip() + "|" + journalist_check['Name'].str.lower().str.strip()
     combined['key'] = combined['Publication Name'].str.lower().str.strip() + "|" + combined['Journalist'].str.lower().str.strip()
     exus_keys = set(journalist_check[journalist_check['Geo'].str.upper() == 'EXUS']['key'])
     combined['ExUS Author'] = combined['key'].apply(lambda x: 'Yes' if x in exus_keys else '')
     combined.drop(columns=['key'], inplace=True)
 
+    # --- Resolve URLs + map group/outlet ---
     st.info("🔄 Resolving final URLs for deduplication and mapping…")
     progress_bar = st.progress(0, text="Resolving URLs… 0%")
     status_text = st.empty()
@@ -193,39 +230,37 @@ if sprinklr_file and cision_file:
     combined['Group'] = groups
     combined['Outlet'] = outlets
 
+    # --- Deduplication (exact permalink match only) ---
     combined['Resolved_Permalink_lower'] = combined['Resolved_Permalink'].str.lower()
-
     mask_with_url = combined['Resolved_Permalink_lower'].notna() & (combined['Resolved_Permalink_lower'] != "")
     combined['?'] = ''
     combined.loc[
         mask_with_url & combined.duplicated(subset=['Resolved_Permalink_lower'], keep='first'),
         '?'
     ] = 'R'
-
     combined.loc[combined['ExUS Author'] == 'Yes', '?'] = 'R'
-
     combined.drop(columns=['Resolved_Permalink_lower'], inplace=True)
 
+    # Show final URL as clickable hyperlink (display the full URL)
     combined['Permalink'] = combined['Resolved_Permalink']
     combined.drop(columns=['Resolved_Permalink'], inplace=True)
-
     combined['Permalink'] = combined['Permalink'].apply(
         lambda x: f'=HYPERLINK("{x}", "{x}")' if pd.notna(x) and x != "" else ""
     )
 
+    # --- Final columns / ordering ---
     final_cols = [
         'CreatedTime', 'Source', 'Publication Name', 'Group', 'Outlet',
         'Media Title', 'Permalink', '?', 'Campaign', 'Phase', 'Products', 'PreOrder',
         'Journalist', 'Sentiment', 'Country', 'Total News Media Potential Reach',
         'Web shares overall', 'EMV', 'ExUS Author', 'Source Platform'
     ]
-
     for col in final_cols:
         if col not in combined.columns:
             combined[col] = ""
-
     combined = combined[final_cols]
 
+    # --- Write Excel with styles ---
     out = BytesIO()
     combined.to_excel(out, index=False, engine='openpyxl')
     out.seek(0)
