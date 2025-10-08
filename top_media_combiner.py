@@ -2,10 +2,12 @@
 # Features:
 # - Combine Sprinklr + Cision
 # - Resolve URLs (keeps full MSN permalinks)
-# - Fill missing Journalist for Forbes / TechRadar / Tom’s Guide by scraping
-# - Map Group/Outlet using explicit rules + master list
-# - Flag duplicates, ExUS authors, REMOVE groups/outlets, and non-US locale URLs → ? = 'R'
+# - Fill missing Journalist for Forbes / TechRadar / Tom’s Guide (CSS + JSON-LD + AMP fallback)
+# - Map Group/Outlet via explicit rules + master list
+# - Flag duplicates, ExUS authors, REMOVE, Non-US URL, MSN Non-US → ? = 'R'
+# - NEW: "R Reason" (final column) explains why 'R' was applied
 # - Journalist column appears immediately before Sentiment
+# - Journalist names auto-filled by the app are colored BLUE in the Excel export
 # - Styled Excel output with clickable full URLs
 
 import streamlit as st
@@ -40,7 +42,8 @@ Upload your daily **Sprinklr** and **Cision** files. This app will:
 ✅ Add blank columns for manual entry  
 ✅ Show live progress bar during URL resolution  
 ✅ Styled header + column widths  
-✅ `Source Platform` column (`Sprinklr` or `Cision`) at the end
+✅ `Source Platform` column (`Sprinklr` or `Cision`) at the end  
+✅ **NEW**: `R Reason` (last column) explains why a row was flagged `R`
 """)
 
 # ---------------------------
@@ -155,6 +158,21 @@ TARGET_SCRAPE_DOMAINS = {
     "tomsguide.com","www.tomsguide.com",
 }
 
+UA = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"),
+    "Accept-Language": "en-US,en;q=0.8",
+}
+
+def _fetch_html(url: str) -> str:
+    try:
+        r = requests.get(url, timeout=10, headers=UA, allow_redirects=True)
+        if r.status_code < 400:
+            return r.text or ""
+    except Exception:
+        pass
+    return ""
+
 def _extract_author_from_html(domain: str, html: str) -> Optional[str]:
     soup = BeautifulSoup(html, "html.parser")
     d = (domain or "").lower()
@@ -163,43 +181,89 @@ def _extract_author_from_html(domain: str, html: str) -> Optional[str]:
     if "forbes" in d:
         meta = soup.find("meta", attrs={"name": "author"})
         if meta and meta.get("content"):
-            return meta["content"].strip()
+            return re.sub(r"^by\s+", "", meta["content"].strip(), flags=re.I)
         tag = soup.select_one("a[rel='author'], span.contributor__name")
         if tag:
-            return tag.get_text(strip=True)
+            return re.sub(r"^by\s+", "", tag.get_text(strip=True), flags=re.I)
 
-    # TechRadar
+    # TechRadar (Future plc sites) — selectors + meta + JSON-LD
     if "techradar" in d:
-        tag = soup.select_one("span.by-author, a.author, a[itemprop='url'] span[itemprop='name']")
-        if tag:
-            return tag.get_text(strip=True)
+        for sel in [
+            "span.by-author",
+            "span.byline__name",
+            ".article-byline__author",
+            "a.author",
+            "a[rel='author']",
+            "a[href*='/author/']",
+            "a[itemprop='url'] span[itemprop='name']",
+            "[itemprop='author'] [itemprop='name']",
+        ]:
+            tag = soup.select_one(sel)
+            if tag:
+                txt = tag.get_text(strip=True)
+                if txt:
+                    return re.sub(r"^by\s+", "", txt, flags=re.I)
+
         meta = soup.find("meta", attrs={"name": "author"})
         if meta and meta.get("content"):
-            return meta["content"].strip()
+            return re.sub(r"^by\s+", "", meta["content"].strip(), flags=re.I)
+
+        for s in soup.find_all("script", attrs={"type": "application/ld+json"}):
+            try:
+                import json
+                data = s.string
+                if not data:
+                    continue
+                obj = json.loads(data)
+                items = obj if isinstance(obj, list) else [obj]
+                names = []
+                for it in items:
+                    t = str(it.get("@type", "")).lower()
+                    if t in ("article", "newsarticle", "blogposting"):
+                        auth = it.get("author")
+                        if isinstance(auth, dict) and auth.get("name"):
+                            names.append(str(auth["name"]).strip())
+                        elif isinstance(auth, list):
+                            for a in auth:
+                                if isinstance(a, dict) and a.get("name"):
+                                    names.append(str(a["name"]).strip())
+                if names:
+                    return "; ".join([re.sub(r"^by\s+", "", n, flags=re.I) for n in names if n])
+            except Exception:
+                continue
 
     # Tom's Guide
     if "tomsguide" in d:
         tag = soup.select_one("span.author-name, a[rel='author'], a[href*='/author/']")
         if tag:
-            return tag.get_text(strip=True)
+            return re.sub(r"^by\s+", "", tag.get_text(strip=True), flags=re.I)
         meta = soup.find("meta", attrs={"name": "author"})
         if meta and meta.get("content"):
-            return meta["content"].strip()
+            return re.sub(r"^by\s+", "", meta["content"].strip(), flags=re.I)
 
     return None
 
 def fill_missing_journalist(permalink: str, journalist: str) -> str:
-    """If Journalist blank and domain is one of the targets, fetch and parse byline."""
+    """If Journalist blank and domain is target, fetch & parse byline (with AMP fallback)."""
     if pd.notna(journalist) and str(journalist).strip():
         return journalist
     try:
         host = urlparse(permalink).netloc.lower()
         if host not in TARGET_SCRAPE_DOMAINS:
             return journalist
-        r = requests.get(permalink, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
-        if r.status_code < 400 and r.text:
-            name = _extract_author_from_html(host, r.text)
-            return name or journalist
+
+        # Try canonical page
+        html = _fetch_html(permalink)
+        name = _extract_author_from_html(host, html) if html else None
+        if name:
+            return name
+
+        # AMP fallback (very consistent on TR)
+        amp_url = permalink.rstrip("/") + "/amp"
+        html_amp = _fetch_html(amp_url)
+        name = _extract_author_from_html(host, html_amp) if html_amp else None
+        if name:
+            return name
     except Exception:
         pass
     return journalist
@@ -358,15 +422,20 @@ if sprinklr_file and cision_file:
     outlets         = []
     nonus_flags     = []
     filled_journos  = []
+    journalist_filled_flags = []
     n_rows = len(combined)
 
     for idx, row in combined.iterrows():
         resolved = resolve_url(row['Permalink'])
         resolved_urls.append(resolved)
 
-        # Fill missing journalist (Forbes/TechRadar/Tom's Guide)
-        j_filled = fill_missing_journalist(resolved, row.get('Journalist', ''))
+        # Fill missing journalist (Forbes/TechRadar/Tom's Guide) with AMP fallback
+        orig_j = row.get('Journalist', '')
+        j_filled = fill_missing_journalist(resolved, orig_j)
         filled_journos.append(j_filled)
+        journalist_filled_flags.append(
+            (not str(orig_j).strip()) and bool(str(j_filled).strip())
+        )
 
         # Group/Outlet mapping
         group, outlet = map_group_outlet(resolved, row['Publication Name'], master_map)
@@ -384,7 +453,7 @@ if sprinklr_file and cision_file:
     combined['Resolved_Permalink'] = resolved_urls
     combined['Group']     = groups
     combined['Outlet']    = outlets
-    combined['Journalist']= filled_journos  # updated bylines (before ExUS check below)
+    combined['Journalist']= filled_journos  # (now updated)
 
     # Re-run ExUS author mapping now that some bylines were filled
     combined['key'] = combined['Publication Name'].str.lower().str.strip() + "|" + combined['Journalist'].str.lower().str.strip()
@@ -392,28 +461,54 @@ if sprinklr_file and cision_file:
     combined.drop(columns=['key'], inplace=True)
 
     # ---------------------------
-    # Centralized ? = 'R' logic
+    # Centralized ? = 'R' logic + R Reason (final column)
     # ---------------------------
     combined['?'] = ''
 
     # a) duplicates (by resolved URL)
     combined['Resolved_Permalink_lower'] = combined['Resolved_Permalink'].str.lower()
     mask_with_url = combined['Resolved_Permalink_lower'].notna() & (combined['Resolved_Permalink_lower'] != "")
-    combined.loc[
-        mask_with_url & combined.duplicated(subset=['Resolved_Permalink_lower'], keep='first'),
-        '?'
-    ] = 'R'
-    combined.drop(columns=['Resolved_Permalink_lower'], inplace=True)
+    dup_mask = mask_with_url & combined.duplicated(subset=['Resolved_Permalink_lower'], keep='first')
 
     # b) ExUS Author
-    combined.loc[combined['ExUS Author'] == 'Yes', '?'] = 'R'
+    exus_mask = combined['ExUS Author'].eq('Yes')
 
     # c) REMOVE group/outlet
-    combined.loc[combined['Group'].str.upper()  == 'REMOVE', '?'] = 'R'
-    combined.loc[combined['Outlet'].str.upper() == 'REMOVE', '?'] = 'R'
+    remove_group_mask  = combined['Group'].str.upper().eq('REMOVE')
+    remove_outlet_mask = combined['Outlet'].str.upper().eq('REMOVE')
 
-    # d) Non-US URL patterns
-    combined.loc[pd.Series(nonus_flags, index=combined.index) == 'R', '?'] = 'R'
+    # d) Non-US URL patterns (from loop)
+    nonus_mask = pd.Series(nonus_flags, index=combined.index).eq('R')
+
+    # e) MSN non-US (explicit)
+    path_series = combined['Resolved_Permalink'].fillna('').str.lower().str.replace(r'^[a-z]+://[^/]+', '', regex=True)
+    msn_mask = combined['Resolved_Permalink'].str.contains('msn.com', case=False, na=False)
+    msn_loc  = path_series.apply(_msn_locale)
+    msn_non_us_mask = msn_mask & ~msn_loc.isin(_US_MSN_LOCALES)
+
+    # Final '?' flag
+    combined.loc[
+        dup_mask | exus_mask | remove_group_mask | remove_outlet_mask | nonus_mask | msn_non_us_mask,
+        '?'
+    ] = 'R'
+
+    # Build R Reason strings (ordered, multiple allowed)
+    reasons = [[] for _ in range(len(combined))]
+    def _add_reason(mask, label):
+        for i in combined.index[mask]:
+            reasons[i].append(label)
+
+    _add_reason(dup_mask,             'Duplicate URL')
+    _add_reason(exus_mask,            'ExUS Author')
+    _add_reason(remove_group_mask,    'REMOVE Group')
+    _add_reason(remove_outlet_mask,   'REMOVE Outlet')
+    _add_reason(msn_non_us_mask,      'MSN Non-US')
+    _add_reason(nonus_mask & ~msn_non_us_mask, 'Non-US URL')
+
+    combined['R Reason'] = ['; '.join(r) for r in reasons]
+
+    # Clean up helper
+    combined.drop(columns=['Resolved_Permalink_lower'], inplace=True)
 
     # Show final URL as clickable hyperlink (display the full URL)
     combined['Permalink'] = combined['Resolved_Permalink']
@@ -428,7 +523,8 @@ if sprinklr_file and cision_file:
         'Media Title', 'Permalink', '?', 'Campaign', 'Phase', 'Products', 'PreOrder',
         'Journalist', 'Sentiment',
         'Country', 'Total News Media Potential Reach', 'Web shares overall', 'EMV',
-        'ExUS Author', 'Source Platform'
+        'ExUS Author', 'Source Platform',
+        'R Reason',  # <-- last column
     ]
     for col in final_cols:
         if col not in combined.columns:
@@ -476,6 +572,14 @@ if sprinklr_file and cision_file:
                     horizontal='left',
                     shrink_to_fit=False
                 )
+
+    # Color Journalist cells blue if the app populated them
+    if "Journalist" in header_map:
+        j_col_idx = header_map["Journalist"]  # 1-based
+        j_col_letter = get_column_letter(j_col_idx)
+        for i, filled in enumerate(journalist_filled_flags, start=2):  # data starts at row 2
+            if filled:
+                ws[f"{j_col_letter}{i}"].font = Font(color="0000F5")
 
     styled_out = BytesIO()
     wb.save(styled_out)
